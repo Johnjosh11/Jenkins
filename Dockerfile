@@ -1,4 +1,4 @@
-FROM tomcat:8.5.16-jre9-alpine
+FROM tomcat:8.5.16-jre8-alpine
 
 EXPOSE 8089
 
