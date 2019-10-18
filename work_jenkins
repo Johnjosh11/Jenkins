@@ -1,0 +1,144 @@
+cd devel/common/docker
+#chmod 775 run_latest_branch.sh
+#chmod 775 run_in_openstack_branch.sh
+#chmod 775 delete_machine_branch.sh
+#chmod 775 publish_containers_branch.sh
+#chmod 775 run_in_openstack_branch.sh
+#chmod 775 run_latest_branch.sh
+
+BRANCH_NAME_TEMP=${BRANCH_NAME//[^[:alnum:]]/}
+BRANCH_NAME="${BRANCH_NAME_TEMP,,}"
+echo $BRANCH_NAME
+
+ #curl --user selfservice-jenkins:101805ea8273909809aaf3e7c20eb382 "http://spode.saunalahti.fi/job/crm-api-build-branch-deploy-docker-container/buildWithParameters?CRM-API_BRANCH_NAME=${CRM-API_BRANCH_NAME}"
+#cd /data/workspace
+#/data/workspace/bin/compile-package.sh -Ddocker.version=${BRANCH_NAME} docker:build
+
+#./delete_machine.sh $BRANCH_NAME_TEMP
+#./publish_containers_branch.sh
+#./publish_containers.sh $BRANCH_NAME_TEMP
+if [[ "$team" = "llt" && "$wagner_db" = "conf/docker/Merisiili/wagner.properties" ]]
+then
+        BRANCH_NAME="lltdeploy-merisiili-db"
+elif [ "$team" = "llt" ]
+then
+    BRANCH_NAME="lltdeploy"
+else
+        BRANCH_NAME="vltdeploy"
+fi
+echo $BRANCH_NAME
+
+./publish_containers.sh $BRANCH_NAME $APPLICATIONS
+#./run_in_openstack_branch.sh
+##./run_in_openstack.sh $BRANCH_NAME_TEMP
+
+echo BRANCH_NAME= $BRANCH_NAME > latest/.env
+# create logs structure to remote machine that is similar to what is on local machine
+#./clear_logs.sh
+#docker-machine ssh $BRANCH_NAME sudo mkdir -p $(pwd)/logs
+#docker-machine scp -r logs $BRANCH_NAME:/tmp
+#docker-machine ssh $BRANCH_NAME sudo cp -r /tmp/logs $(pwd)
+
+# wait until containers are probably deployed, todo: use polling here?
+#sleep 14m
+
+#echo BRANCH_NAME= $BRANCH_NAME > latest/.env
+#./run_latest_branch.sh
+# wait until containers are probably deployed, todo: use polling here?
+docker system prune -af
+
+
+---------------------------------publish_container.sh-------------------------------------------
+#!/bin/bash
+# make sure OS_USERNAME and OS_PASSWORD are set before running this
+set -e
+
+function publish {
+    cd ../../software/$1/
+    # build 
+    docker build -t $1 .
+
+    # login
+    docker login -u $OS_USERNAME -p $OS_PASSWORD ahtaaja.saunalahti.fi
+      #  if [ "$wagner-db" = "conf/docker/wagner-meisiili.properties" ]
+      #  then
+      #	    BRANCH_NAME="$BRANCH_NAME-merisiili-db"
+      #	    echo $BRANCH_NAME 
+      #  fi
+    # tag and publish
+    docker tag $1 ahtaaja.saunalahti.fi/jpd/devel/public/$1/$BRANCH_NAME
+    docker push ahtaaja.saunalahti.fi/jpd/devel/public/$1/$BRANCH_NAME
+
+    cd -
+}
+
+IFS=', ' read -r -a APPLICATIONS <<< "$2"
+
+./prepare_containers.sh $2
+
+for application in ${APPLICATIONS[@]};
+do
+    publish $application
+done
+
+-------------------------------------------prepare_container.sh-------------------------------
+#!/bin/bash
+# build wars
+set -e
+IFS=', ' read -r -a APPLICATIONS <<< "$1"
+
+./copy_wait-for-it.sh $1
+
+declare -A APPLICATIONS_MAP
+
+for key in "${!APPLICATIONS[@]}"; do APPLICATIONS_MAP[${APPLICATIONS[$key]}]="$key"; done
+
+if [ -n "${APPLICATIONS_MAP[choppo]}" ];
+then
+cd ../../software/choppo/
+../../common/ant/bin/ant -Dproject.qualifier=-SNAPSHOT build-all-upstream generate-tar
+cd -
+fi
+
+if [ -n "${APPLICATIONS_MAP[lappo]}" ];
+then
+cd ../../software/lappo/
+../../common/ant/bin/ant -Dproject.qualifier=-SNAPSHOT -Dinstall-spec-file=docker -Dapp.properties.file=etc/docker/lappo.properties build-all-upstream generate-tar
+cd -
+fi 
+
+if [ -n "${APPLICATIONS_MAP[seppo]}" ];
+then
+cd ../../software/seppo/
+../../common/ant/bin/ant -Dproject.qualifier=-SNAPSHOT -Dinstall-spec-file=docker build-all-upstream generate-tar
+cd -
+fi
+
+if [ -n "${APPLICATIONS_MAP[mappo]}" ];
+then
+cd ../../software/mappo/
+../../common/ant/bin/ant -Dproject.qualifier=-SNAPSHOT -Dinstall-spec-file=docker build-all-upstream generate-tar
+cd -
+fi
+
+if [ -n "${APPLICATIONS_MAP[wagner]}" ];
+then
+cd ../../software/wagner/
+../../common/ant/bin/ant -Dproject.qualifier=-SNAPSHOT -Dinstall-spec-file=localhost-tomcat -Dapp.properties.file=$wagner_db build-all-upstream generate-war
+mv build/wagner-1.0-SNAPSHOT.war build/wagner.war
+cd -
+fi
+
+# copy web from settings into intra so we can put it in container (TODO? should these be hosted by settings tomcat?)
+if [ -n "${APPLICATIONS_MAP[jpd-intra]}" ];
+then
+mkdir -p ../../software/jpd-intra/docker-temp/lib
+cp -r ../../software/settings/web/* ../../software/jpd-intra/docker-temp/
+cp -r ../../../database/lib/* ../../software/jpd-intra/docker-temp/lib/
+rm    ../../software/jpd-intra/docker-temp/lib/SLwww.pm
+rm    ../../software/jpd-intra/docker-temp/lib/JGdatabase.pm
+# copy custom configuration for jpd-intra
+cp -r basic/conf/conf ../../software/jpd-intra/docker-temp/
+#cp -r basic/conf/crypt ../../software/jpd-intra/docker-temp/
+#cp -r basic/conf/key ../../software/jpd-intra/docker-temp/
+fi
